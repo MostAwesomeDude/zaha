@@ -1,12 +1,14 @@
 #!/usr/bin/env nix-shell
 # encoding: utf-8
-#! nix-shell -p graphviz pythonPackages.click-repl -i python
+#! nix-shell -p graphviz pythonPackages.attrs pythonPackages.click-repl -i python
 
 from collections import defaultdict
 from itertools import combinations
 import json
 from struct import Struct
 from subprocess import CalledProcessError, PIPE, Popen
+
+import attr
 
 import click
 from click_repl import register_repl
@@ -157,38 +159,12 @@ def parseChains(expr):
     labellist = sorted(clabels.iterkeys(), key=clabels.__getitem__)
     return dcg, labellist
 
-@cli.command()
-@click.option("--expr", prompt=True)
-def poset(expr):
-    dcg, labels = parseChains(expr)
-    sccs = tarjan(dcg)
-    ks = [u"≅".join(labels[v] for v in sorted(scc)) for scc in sccs]
-    # Build the DAG from DCG. First make labels from the SCCs. Then iterate
-    # through the DCG and build the DAG.
-    seen = {}
-    for u, scc in enumerate(sccs):
-        for old in scc:
-            seen[old] = u
-    dag = defaultdict(set)
-    for u, vs in dcg.iteritems():
-        dag[seen[u]].update(seen[v] for v in vs)
-    reduce(dag)
-    s = succinct(dag, len(ks))
-    png = makePNG(ks, s)
-    with open("latest.png", "wb") as handle:
-        handle.write(png)
-
 def getPayload(bs):
     for ty, chunk in iterchunks(bs):
         if ty != ZAHA_CHUNK_TYPE:
             continue
         return json.loads(chunk)
     raise ValueError("Payload was missing %s chunk" % ZAHA_CHUNK_TYPE)
-
-@cli.command()
-@click.argument("diagram", type=click.File("rb"))
-def describe(diagram):
-    print getPayload(diagram.read())
 
 def flip(size, structure):
     cols = [[] for _ in range(size)]
@@ -208,6 +184,55 @@ def flip(size, structure):
             rv |= 1 << perm[i]
     return rv
 
+@attr.s
+class Pos(object):
+    labels = attr.ib()
+    structure = attr.ib()
+
+    def makePNG(self):
+        return makePNG(self.labels, self.structure)
+
+    def dual(self):
+        labels = self.labels[:]
+        labels.reverse()
+        structure = flip(len(labels), self.structure)
+        return Pos(labels=labels, structure=structure)
+
+def getDiagram(bs):
+    d = getPayload(bs)
+    v = d.pop("v")
+    if v != 1:
+        raise ValueError("Unknown diagram version %d" % v)
+    d.pop("cat")
+    return Pos(**d)
+
+@cli.command()
+@click.option("--expr", prompt=True)
+def poset(expr):
+    dcg, labels = parseChains(expr)
+    sccs = tarjan(dcg)
+    ks = [u"≅".join(labels[v] for v in sorted(scc)) for scc in sccs]
+    # Build the DAG from DCG. First make labels from the SCCs. Then iterate
+    # through the DCG and build the DAG.
+    seen = {}
+    for u, scc in enumerate(sccs):
+        for old in scc:
+            seen[old] = u
+    dag = defaultdict(set)
+    for u, vs in dcg.iteritems():
+        dag[seen[u]].update(seen[v] for v in vs)
+    reduce(dag)
+    s = succinct(dag, len(ks))
+    d = Pos(labels=ks, structure=s)
+    png = d.makePNG()
+    with open("latest.png", "wb") as handle:
+        handle.write(png)
+
+@cli.command()
+@click.argument("diagram", type=click.File("rb"))
+def describe(diagram):
+    print getDiagram(diagram.read())
+
 @cli.command()
 @click.argument("diagram", type=click.File("rb"))
 @click.argument("output", type=click.File("wb"))
@@ -215,11 +240,9 @@ def dual(diagram, output):
     """
     Turn around, or flip, every arrow in a diagram.
     """
-    d = getPayload(diagram.read())
-    size = len(d["labels"])
-    d["labels"].reverse()
-    d["structure"] = flip(size, d["structure"])
-    png = makePNG(d["labels"], d["structure"])
+    d = getDiagram(diagram.read())
+    d = d.dual()
+    png = d.makePNG()
     with output as handle:
         handle.write(png)
 
