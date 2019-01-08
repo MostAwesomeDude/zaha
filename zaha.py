@@ -178,13 +178,50 @@ def poset(expr):
     with open("latest.png", "wb") as handle:
         handle.write(png)
 
+def getPayload(bs):
+    for ty, chunk in iterchunks(bs):
+        if ty != ZAHA_CHUNK_TYPE:
+            continue
+        return json.loads(chunk)
+    raise ValueError("Payload was missing %s chunk" % ZAHA_CHUNK_TYPE)
+
 @cli.command()
 @click.argument("diagram", type=click.File("rb"))
 def describe(diagram):
-    for ty, chunk in iterchunks(diagram.read()):
-        if ty != ZAHA_CHUNK_TYPE:
-            continue
-        print json.loads(chunk)
+    print getPayload(diagram.read())
+
+def flip(size, structure):
+    cols = [[] for _ in range(size)]
+    # NB: Triangular number formula, always integer
+    intSize = (size * (size - 1)) // 2
+    ints = range(intSize)
+    for i in range(size):
+        for j in range(i):
+            cols[j].append(ints.pop())
+    perm = sum(cols, [])
+    print "size", size, "perm", perm
+    print "perm inverts self", [perm[i] for i in perm]
+
+    rv = 0
+    for i in range(intSize):
+        if structure & (1 << i):
+            rv |= 1 << perm[i]
+    return rv
+
+@cli.command()
+@click.argument("diagram", type=click.File("rb"))
+@click.argument("output", type=click.File("wb"))
+def dual(diagram, output):
+    """
+    Turn around, or flip, every arrow in a diagram.
+    """
+    d = getPayload(diagram.read())
+    size = len(d["labels"])
+    d["labels"].reverse()
+    d["structure"] = flip(size, d["structure"])
+    png = makePNG(d["labels"], d["structure"])
+    with output as handle:
+        handle.write(png)
 
 if __name__ == "__main__":
     register_repl(cli)
