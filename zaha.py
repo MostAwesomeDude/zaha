@@ -23,6 +23,18 @@ def iterpairs(l):
         for j in range(i + 1, len(l)):
                 yield x, l[j]
 
+def itertilted(m, n):
+    for i in range(m + n - 1):
+        j = i - (m - 1) if i > m - 1 else 0
+        i -= j
+        assert i < m
+        yield i, j
+        while i and j < n - 1:
+            i -= 1
+            j += 1
+            yield i, j
+
+
 def dot2png(text):
     p = Popen(["dot", "-Tpng"], stdin=PIPE, stdout=PIPE)
     stdout, stderr = p.communicate(text)
@@ -197,6 +209,24 @@ class Pos(object):
     def makePNG(self):
         return makePNG(self.labels, self.structure)
 
+    def address(self, u, v):
+        l = len(self.labels)
+        if u >= v or l <= u or l <= v:
+            raise Exception("oob on %d: %d, %d" % (l, u, v))
+        # The addressing scheme is like a regular 2D bitarray, except that
+        # each u-row is smaller than the last.
+        return sum(range(l - u - 1, l - 1)) + v - 1
+
+    def hasArrow(self, u, v):
+        if u > v:
+            rv = False
+        elif u == v:
+            rv = True
+        else:
+            rv = bool(self.structure & (1 << self.address(u, v)))
+        print "hasArrow", self.labels[u], self.labels[v], rv
+        return rv
+
     def dual(self):
         # Strategy: Reverse the labels and transpose the matrix.
         labels = self.labels[:]
@@ -226,6 +256,21 @@ class Pos(object):
             maskSize -= 1
             offset += stride
             stride -= 1
+        return Pos(labels=ls, structure=s)
+
+    def product(self, other):
+        slen = len(self.labels)
+        olen = len(other.labels)
+        tilted = list(itertilted(slen, olen))
+        ls = []
+        for l, r in tilted:
+            s = self.labels[l] + "*" + other.labels[r]
+            ls.append(s)
+        s = 0
+        pairs = iterpairs(tilted)
+        for i, ((su, ou), (sv, ov)) in enumerate(pairs):
+            if self.hasArrow(su, sv) and other.hasArrow(ou, ov):
+                s |= 1 << i
         return Pos(labels=ls, structure=s)
 
     def links(self):
@@ -319,6 +364,21 @@ def _sum(lhs, rhs):
     # We can symmetrically go in either direction. This is the direction that
     # Python would choose if we used operator overloading and wrote `l + r`.
     d = l.sum(r)
+    png = d.makePNG()
+    with open("latest.png", "wb") as handle:
+        handle.write(png)
+
+@cli.command(name="product")
+@click.argument("lhs", type=click.File("rb"))
+@click.argument("rhs", type=click.File("rb"))
+def _product(lhs, rhs):
+    """
+    Take the product of two diagrams.
+    """
+    l = getDiagram(lhs.read())
+    r = getDiagram(rhs.read())
+    # Dual to sums.
+    d = l.product(r)
     png = d.makePNG()
     with open("latest.png", "wb") as handle:
         handle.write(png)
