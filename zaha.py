@@ -227,6 +227,19 @@ class Pos(object):
         print "hasArrow", self.labels[u], self.labels[v], rv
         return rv
 
+    def reduce(self):
+        slen = len(self.labels)
+        s = self.structure
+        for u in range(slen):
+            vs = [v for v in range(u + 1, slen) if self.hasArrow(u, v)]
+            # Order doesn't matter here, so itertools.combinations() is safe.
+            for v1, v2 in combinations(vs, 2):
+                if self.hasArrow(v1, v2):
+                    s ^= 1 << self.address(u, v2)
+                elif self.hasArrow(v2, v1):
+                    s ^= 1 << self.address(u, v1)
+        return Pos(labels=self.labels, structure=s)
+
     def dual(self):
         # Strategy: Reverse the labels and transpose the matrix.
         labels = self.labels[:]
@@ -271,7 +284,7 @@ class Pos(object):
         for i, ((su, ou), (sv, ov)) in enumerate(pairs):
             if self.hasArrow(su, sv) and other.hasArrow(ou, ov):
                 s |= 1 << i
-        return Pos(labels=ls, structure=s)
+        return Pos(labels=ls, structure=s).reduce()
 
     def links(self):
         return [pair for i, pair in enumerate(iterpairs(self.labels))
