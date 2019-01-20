@@ -158,9 +158,9 @@ def reduce(dag):
         vs.discard(u)
         # Order doesn't matter here, so itertools.combinations() is safe.
         for v1, v2 in combinations(vs.copy(), 2):
-            if v2 in dag[v1]:
+            if v2 in dag.get(v1, ()):
                 vs.discard(v2)
-            elif v1 in dag[v2]:
+            elif v1 in dag.get(v2, ()):
                 vs.discard(v1)
 
 def parseChains(expr):
@@ -349,6 +349,20 @@ def cli():
 def poset(expr):
     dcg, labels = parseChains(expr)
     d = Pos.fromDCG(labels, dcg)
+    png = d.makePNG()
+    with open("latest.png", "wb") as handle:
+        handle.write(png)
+
+@cli.command()
+@click.argument("diagram", type=click.File("rb"))
+def relabel(diagram):
+    d = getDiagram(diagram.read())
+    old = d.labels
+    text = click.edit(text="\n".join(old))
+    new = [l.strip() for l in text.split("\n") if l.strip()]
+    if len(new) != len(old):
+        raise ValueError("Incorrect number of labels")
+    d.labels = new
     png = d.makePNG()
     with open("latest.png", "wb") as handle:
         handle.write(png)
