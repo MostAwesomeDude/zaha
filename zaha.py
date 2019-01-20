@@ -206,6 +206,24 @@ class Pos(object):
     labels = attr.ib()
     structure = attr.ib()
 
+    @classmethod
+    def fromDCG(cls, labels, dcg):
+        sccs = tarjan(dcg)
+        ks = [u"≅".join(labels[v] for v in sorted(scc)) for scc in sccs]
+        # Build the DAG from DCG. First make labels from the SCCs. Then iterate
+        # through the DCG and build the DAG.
+        seen = {}
+        for u, scc in enumerate(sccs):
+            for old in scc:
+                seen[old] = u
+        dag = defaultdict(set)
+        for u, vs in dcg.iteritems():
+            dag[seen[u]].update(seen[v] for v in vs)
+        reduce(dag)
+        s = succinct(dag, len(ks))
+        self = cls(labels=ks, structure=s)
+        return self
+
     def makePNG(self):
         return makePNG(self.labels, self.structure)
 
@@ -224,8 +242,12 @@ class Pos(object):
             rv = True
         else:
             rv = bool(self.structure & (1 << self.address(u, v)))
-        print "hasArrow", self.labels[u], self.labels[v], rv
         return rv
+
+    def iterarrows(self):
+        for i, (u, v) in enumerate(iterpairs(range(len(self.labels)))):
+            if self.structure & (1 << i):
+                yield u, v
 
     def reduce(self):
         slen = len(self.labels)
@@ -326,20 +348,7 @@ def cli():
 @click.option("--expr", prompt=True)
 def poset(expr):
     dcg, labels = parseChains(expr)
-    sccs = tarjan(dcg)
-    ks = [u"≅".join(labels[v] for v in sorted(scc)) for scc in sccs]
-    # Build the DAG from DCG. First make labels from the SCCs. Then iterate
-    # through the DCG and build the DAG.
-    seen = {}
-    for u, scc in enumerate(sccs):
-        for old in scc:
-            seen[old] = u
-    dag = defaultdict(set)
-    for u, vs in dcg.iteritems():
-        dag[seen[u]].update(seen[v] for v in vs)
-    reduce(dag)
-    s = succinct(dag, len(ks))
-    d = Pos(labels=ks, structure=s)
+    d = Pos.fromDCG(labels, dcg)
     png = d.makePNG()
     with open("latest.png", "wb") as handle:
         handle.write(png)
@@ -392,6 +401,34 @@ def _product(lhs, rhs):
     r = getDiagram(rhs.read())
     # Dual to sums.
     d = l.product(r)
+    png = d.makePNG()
+    with open("latest.png", "wb") as handle:
+        handle.write(png)
+
+@cli.command()
+@click.argument("diagrams", nargs=-1, type=click.File("rb"))
+def union(diagrams):
+    """
+    Take the union of many diagrams.
+    """
+
+    # Build the union.
+    dcg = defaultdict(set)
+    relabels = {}
+    labels = []
+    for diagram in diagrams:
+        poset = getDiagram(diagram.read())
+        ls = []
+        for l in poset.labels:
+            if l not in relabels:
+                relabels[l] = len(labels)
+                labels.append(l)
+            ls.append(relabels[l])
+        # ls = [relabels.setdefault(l, len(relabels)) for l in poset.labels]
+        for u, v in poset.iterarrows():
+            dcg[ls[u]].add(ls[v])
+
+    d = Pos.fromDCG(labels, dcg)
     png = d.makePNG()
     with open("latest.png", "wb") as handle:
         handle.write(png)
