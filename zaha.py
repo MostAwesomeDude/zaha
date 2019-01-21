@@ -430,17 +430,34 @@ def union(diagrams):
     dcg = defaultdict(set)
     relabels = {}
     labels = []
+    isos = []
     for diagram in diagrams:
         poset = getDiagram(diagram.read())
-        ls = []
-        for l in poset.labels:
-            if l not in relabels:
-                relabels[l] = len(labels)
-                labels.append(l)
-            ls.append(relabels[l])
-        # ls = [relabels.setdefault(l, len(relabels)) for l in poset.labels]
+        broadcasts = []
+        for label in poset.labels:
+            # We broadcast each member of an isomorphic label, since we're
+            # taking unions by label.
+            broadcasts.append(set())
+            if u"≅" in label:
+                pieces = label.split(u"≅")
+                isos.append(pieces)
+            else:
+                pieces = label,
+            for l in pieces:
+                if l not in relabels:
+                    relabels[l] = len(labels)
+                    labels.append(l)
+                broadcasts[-1].add(relabels[l])
         for u, v in poset.iterarrows():
-            dcg[ls[u]].add(ls[v])
+            for i in broadcasts[u]:
+                for j in broadcasts[v]:
+                    dcg[i].add(j)
+    # And, for each isomorphism, add all the autos to the DCG as well.
+    for iso in isos:
+        us = [relabels[l] for l in iso]
+        for u in us:
+            for v in us:
+                dcg[u].add(v)
 
     d = Pos.fromDCG(labels, dcg)
     png = d.makePNG()
