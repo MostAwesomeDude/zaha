@@ -1,0 +1,35 @@
+Note that partially ordered sets, or posets, are isomorphic to directed
+acyclic graphs, or DAGs. A poset's elements are a DAG's vertices, and the
+less-than-or-equal relation becomes the path relation. This isomorphism
+actually relates a poset to a family of DAGs. We will select the transitive
+reduction from amongst them; this is the smallest member of the family. (Proof
+of all of this is left to the reader.)
+
+We can represent a poset/DAG as an upper triangular matrix in the Booleans.
+The matrix's rows and columns are the elements/vertices, and each member of
+the matrix indicates whether there is an arrow from the given row-element to
+the given column-element. To ensure that there are no arrows outside the upper
+triangular region, the elements must be ordered as a linear extension, also
+known as a topological sorting.
+
+As an example, suppose we have a poset with three elements, X, Y, and Z, and
+arrows X -> Y and X -> Z.
+
+A valid linear extension is [ X Y Z ]. The resulting matrix is:
+
+[ 1 1 1 ]
+[ 0 1 0 ]
+[ 0 0 1 ]
+
+Note that all elements relate to themselves, so that the diagonal is
+implicitly always 1.
+
+[ \ 1 1 ]
+[   \ 0 ]
+[     \ ]
+
+\11
+ \0
+  \
+
+Thus, we may store any poset/DAG as a bitstring and a cardinality of elements.
