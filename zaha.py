@@ -152,16 +152,36 @@ def succinct(dag, size):
             acc |= 1 << i
     return acc
 
-def reduce(dag):
+def reduceDAG(dag):
+    def downward(u, v, _cache={}):
+        k = u, v
+        if k not in _cache:
+            rv = False
+            seen = set()
+            queue = list(dag.get(u, ()))
+            while queue:
+                n = queue.pop()
+                if n in seen:
+                    continue
+                seen.add(n)
+                if n == v:
+                    rv = True
+                    break
+                queue.extend(dag.get(n, ()))
+            _cache[k] = rv
+        return _cache[k]
+
     for u, vs in dag.iteritems():
         # Remove self-loops here.
         vs.discard(u)
         # Order doesn't matter here, so itertools.combinations() is safe.
         for v1, v2 in combinations(vs.copy(), 2):
-            if v2 in dag.get(v1, ()):
+            if downward(v1, v2):
                 vs.discard(v2)
-            elif v1 in dag.get(v2, ()):
+            elif downward(v2, v1):
                 vs.discard(v1)
+    return dag
+
 
 def parseChains(expr):
     dcg = defaultdict(set)
@@ -219,7 +239,7 @@ class Pos(object):
         dag = defaultdict(set)
         for u, vs in dcg.iteritems():
             dag[seen[u]].update(seen[v] for v in vs)
-        reduce(dag)
+        dag = reduceDAG(dag)
         s = succinct(dag, len(ks))
         self = cls(labels=ks, structure=s)
         return self
@@ -250,16 +270,14 @@ class Pos(object):
                 yield u, v
 
     def reduce(self):
-        slen = len(self.labels)
-        s = self.structure
-        for u in range(slen):
-            vs = [v for v in range(u + 1, slen) if self.hasArrow(u, v)]
-            # Order doesn't matter here, so itertools.combinations() is safe.
-            for v1, v2 in combinations(vs, 2):
-                if self.hasArrow(v1, v2):
-                    s ^= 1 << self.address(u, v2)
-                elif self.hasArrow(v2, v1):
-                    s ^= 1 << self.address(u, v1)
+        # Build a DAG.
+        dag = defaultdict(set)
+        for u, v in self.iterarrows():
+            dag[u].add(v)
+        # Reduce that DAG.
+        dag = reduceDAG(dag)
+        # All done.
+        s = succinct(dag, len(self.labels))
         return Pos(labels=self.labels, structure=s)
 
     def dual(self):
