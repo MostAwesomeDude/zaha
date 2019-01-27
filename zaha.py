@@ -90,8 +90,11 @@ def buildChunk(ty, chunk):
     crc = LONG.pack(computeCRC(body))
     return length + body + crc
 
-def succinct2dot(labels, structure):
-    lines = []
+def succinct2dot(labels, structure, title):
+    lines = [
+        u'labelloc="t";',
+        u'label="%s";' % (title,),
+    ]
     for label in labels:
         lines.append(u""""%s";""" % label)
     for i, (u, v) in enumerate(iterpairs(labels)):
@@ -101,13 +104,14 @@ def succinct2dot(labels, structure):
 
 ZAHA_CHUNK_TYPE = "zaHa"
 
-def makePNG(labels, structure):
-    dot = succinct2dot(labels, structure)
+def makePNG(labels, structure, title):
+    dot = succinct2dot(labels, structure, title)
     png = dot2png(dot)
     chunks = [(ty, chunk) for ty, chunk in iterchunks(png)]
     blob = json.dumps({
-        "v": 1,
+        "v": 2,
         "cat": "Pos",
+        "title": title,
         "labels": labels,
         "structure": structure,
     })
@@ -225,9 +229,10 @@ def flip(size, structure):
 class Pos(object):
     labels = attr.ib()
     structure = attr.ib()
+    title = attr.ib()
 
     @classmethod
-    def fromDCG(cls, labels, dcg):
+    def fromDCG(cls, labels, dcg, title):
         sccs = tarjan(dcg)
         ks = [u"≅".join(labels[v] for v in sorted(scc)) for scc in sccs]
         # Build the DAG from DCG. First make labels from the SCCs. Then iterate
@@ -241,11 +246,11 @@ class Pos(object):
             dag[seen[u]].update(seen[v] for v in vs)
         dag = reduceDAG(dag)
         s = succinct(dag, len(ks))
-        self = cls(labels=ks, structure=s)
+        self = cls(labels=ks, structure=s, title=title)
         return self
 
     def makePNG(self):
-        return makePNG(self.labels, self.structure)
+        return makePNG(self.labels, self.structure, self.title)
 
     def address(self, u, v):
         l = len(self.labels)
@@ -278,14 +283,15 @@ class Pos(object):
         dag = reduceDAG(dag)
         # All done.
         s = succinct(dag, len(self.labels))
-        return Pos(labels=self.labels, structure=s)
+        return Pos(labels=self.labels, structure=s, title=self.title)
 
     def dual(self):
         # Strategy: Reverse the labels and transpose the matrix.
         labels = self.labels[:]
         labels.reverse()
         structure = flip(len(labels), self.structure)
-        return Pos(labels=labels, structure=structure)
+        title = u"Dual of " + self.title
+        return Pos(labels=labels, structure=structure, title=title)
 
     def sum(self, other):
         # Insight: We don't need any new arrows!
@@ -309,7 +315,8 @@ class Pos(object):
             maskSize -= 1
             offset += stride
             stride -= 1
-        return Pos(labels=ls, structure=s)
+        title = self.title + u" + " + other.title
+        return Pos(labels=ls, structure=s, title=title)
 
     def product(self, other):
         slen = len(self.labels)
@@ -324,7 +331,8 @@ class Pos(object):
         for i, ((su, ou), (sv, ov)) in enumerate(pairs):
             if self.hasArrow(su, sv) and other.hasArrow(ou, ov):
                 s |= 1 << i
-        return Pos(labels=ls, structure=s).reduce()
+        title = self.title + u" * " + other.title
+        return Pos(labels=ls, structure=s, title=title).reduce()
 
     def links(self):
         return [pair for i, pair in enumerate(iterpairs(self.labels))
@@ -353,7 +361,12 @@ class Pos(object):
 def getDiagram(bs):
     d = getPayload(bs)
     v = d.pop("v")
-    if v != 1:
+    if v == 1:
+        d["title"] = "Untitled Diagram"
+        v = 2
+    elif v == 2:
+        pass
+    else:
         raise ValueError("Unknown diagram version %d" % v)
     d.pop("cat")
     return Pos(**d)
@@ -364,9 +377,10 @@ def cli():
 
 @cli.command()
 @click.option("--expr", prompt=True)
-def poset(expr):
+@click.option("--title", prompt=True)
+def poset(expr, title):
     dcg, labels = parseChains(expr)
-    d = Pos.fromDCG(labels, dcg)
+    d = Pos.fromDCG(labels, dcg, title)
     png = d.makePNG()
     with open("latest.png", "wb") as handle:
         handle.write(png)
@@ -375,12 +389,13 @@ def poset(expr):
 @click.argument("diagram", type=click.File("rb"))
 def relabel(diagram):
     d = getDiagram(diagram.read())
-    old = d.labels
+    old = [d.title] + d.labels
     text = click.edit(text="\n".join(old))
     new = [l.strip() for l in text.split("\n") if l.strip()]
     if len(new) != len(old):
         raise ValueError("Incorrect number of labels")
-    d.labels = new
+    d.title = new[0]
+    d.labels = new[1:]
     png = d.makePNG()
     with open("latest.png", "wb") as handle:
         handle.write(png)
@@ -449,8 +464,10 @@ def union(diagrams):
     relabels = {}
     labels = []
     isos = []
-    for diagram in diagrams:
-        poset = getDiagram(diagram.read())
+    # Eagerly read in everything so we can close the files and have the
+    # diagrams in memory.
+    posets = [getDiagram(diagram.read()) for diagram in diagrams]
+    for poset in posets:
         broadcasts = []
         for label in poset.labels:
             # We broadcast each member of an isomorphic label, since we're
@@ -477,7 +494,16 @@ def union(diagrams):
             for v in us:
                 dcg[u].add(v)
 
-    d = Pos.fromDCG(labels, dcg)
+    if len(posets) == 1:
+        title = posets[0].title
+    elif len(posets) == 2:
+        title = posets[0].title + u" ∪ " + posets[1].title
+    elif len(posets) <= 5:
+        title = u"⋃ " + u", ".join(p.title for p in posets)
+    else:
+        title = u"⋃ %d diagrams" % (len(posets),)
+
+    d = Pos.fromDCG(labels, dcg, title)
     png = d.makePNG()
     with open("latest.png", "wb") as handle:
         handle.write(png)
