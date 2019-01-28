@@ -378,7 +378,8 @@ def cli():
 @cli.command()
 @click.option("--expr", prompt=True)
 @click.option("--title", prompt=True)
-def poset(expr, title):
+@click.option("--amend/--fresh", default=False)
+def poset(expr, title, amend):
     dcg, labels = parseChains(expr)
     d = Pos.fromDCG(labels, dcg, title)
     png = d.makePNG()
@@ -404,8 +405,9 @@ def relabel(diagram):
 @click.argument("diagram", type=click.File("rb"))
 def describe(diagram):
     d = getDiagram(diagram.read())
-    print d
-    print d.links()
+    for label in d.labels:
+        print label,
+    print ''
     for line in d.matrix():
         print line
 
