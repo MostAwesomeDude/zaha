@@ -35,9 +35,10 @@ def itertilted(m, n):
             yield i, j
 
 
-def dot2png(text):
+def dot2png(dot):
+    text = "digraph " + dot
     p = Popen(["dot", "-Tpng"], stdin=PIPE, stdout=PIPE)
-    stdout, stderr = p.communicate(text)
+    stdout, stderr = p.communicate(text.encode("utf-8"))
     status = p.poll()
     if status:
         raise CalledProcessError(status, "dot", output=stdout)
@@ -90,31 +91,12 @@ def buildChunk(ty, chunk):
     crc = LONG.pack(computeCRC(body))
     return length + body + crc
 
-def succinct2dot(labels, structure, title):
-    lines = [
-        u'labelloc="t";',
-        u'label="%s";' % (title,),
-    ]
-    for label in labels:
-        lines.append(u""""%s";""" % label)
-    for i, (u, v) in enumerate(iterpairs(labels)):
-        if structure & (1 << i):
-            lines.append(u""""%s" -> "%s";""" % (u, v))
-    return "digraph {" + u"\n".join(lines).encode("utf-8") + "}"
-
 ZAHA_CHUNK_TYPE = "zaHa"
 
-def makePNG(labels, structure, title):
-    dot = succinct2dot(labels, structure, title)
+def packPNG(dot, metadata):
     png = dot2png(dot)
     chunks = [(ty, chunk) for ty, chunk in iterchunks(png)]
-    blob = json.dumps({
-        "v": 2,
-        "cat": "Pos",
-        "title": title,
-        "labels": labels,
-        "structure": structure,
-    })
+    blob = json.dumps(metadata)
     chunks.insert(-1, (ZAHA_CHUNK_TYPE, blob))
     return MAGIC + "".join(buildChunk(ty, chunk) for ty, chunk in chunks)
 
@@ -249,8 +231,27 @@ class Pos(object):
         self = cls(labels=ks, structure=s, title=title)
         return self
 
+    def makeDOT(self):
+        lines = [
+            u'labelloc="t";',
+            u'label="%s";' % (self.title,),
+        ]
+        for label in self.labels:
+            lines.append(u""""%s";""" % label)
+        for i, (u, v) in enumerate(iterpairs(self.labels)):
+            if self.structure & (1 << i):
+                lines.append(u""""%s" -> "%s";""" % (u, v))
+        dot = u"{" + u"\n".join(lines) + u"}"
+        return dot
+
     def makePNG(self):
-        return makePNG(self.labels, self.structure, self.title)
+        dot = self.makeDOT()
+        metadata = attr.asdict(self)
+        metadata.update({
+            "v": 2,
+            "cat": "Pos",
+        })
+        return packPNG(dot, metadata)
 
     def address(self, u, v):
         l = len(self.labels)
@@ -268,6 +269,16 @@ class Pos(object):
         else:
             rv = bool(self.structure & (1 << self.address(u, v)))
         return rv
+
+    def hasPath(self, u, v, _cache={}):
+        k = self.structure, u, v
+        if k not in _cache:
+            if self.hasArrow(u, v):
+                _cache[k] = True
+            else:
+                vs = [i for i in range(u + 1, v) if self.hasArrow(u, i)]
+                _cache[k] = any(self.hasPath(i, v) for i in vs)
+        return _cache[k]
 
     def iterarrows(self):
         for i, (u, v) in enumerate(iterpairs(range(len(self.labels)))):
@@ -368,8 +379,44 @@ def getDiagram(bs):
         pass
     else:
         raise ValueError("Unknown diagram version %d" % v)
-    d.pop("cat")
-    return Pos(**d)
+    cat = d.pop("cat")
+    cls = {
+        "Pos": Pos,
+        "Functor": Functor,
+    }[cat]
+    return cls(**d)
+
+@attr.s
+class Functor(object):
+    source = attr.ib()
+    target = attr.ib()
+    map = attr.ib()
+    title = attr.ib()
+
+    def makeDOT(self):
+        s = self.source.makeDOT()
+        t = self.target.makeDOT()
+        lines = [
+            u"{",
+            u"subgraph cluster_lhs " + s,
+            u"subgraph cluster_rhs " + t,
+            u'labelloc="t";',
+            u'label="%s";' % (self.title,),
+        ]
+        for k, v in self.map.iteritems():
+            lines.append(u'"%s" -> "%s";' % (k, v))
+        lines.append(u"}")
+        dot = u"\n".join(lines)
+        return dot
+
+    def makePNG(self):
+        dot = self.makeDOT()
+        metadata = attr.asdict(self)
+        metadata.update({
+            "v": 2,
+            "cat": "Functor",
+        })
+        return packPNG(dot, metadata)
 
 @click.group()
 def cli():
@@ -405,6 +452,7 @@ def relabel(diagram):
 @click.argument("diagram", type=click.File("rb"))
 def describe(diagram):
     d = getDiagram(diagram.read())
+    print d
     for label in d.labels:
         print label,
     print ''
@@ -507,6 +555,67 @@ def union(diagrams):
 
     d = Pos.fromDCG(labels, dcg, title)
     png = d.makePNG()
+    with open("latest.png", "wb") as handle:
+        handle.write(png)
+
+@cli.command()
+@click.option("--id", "data", flag_value="id")
+@click.argument("source", type=click.File("rb"))
+@click.argument("target", type=click.File("rb"))
+def functor(data, source, target):
+    s = getDiagram(source.read())
+    t = getDiagram(target.read())
+    ss = {k:i for (i, k) in enumerate(s.labels)}
+    ts = {k:i for (i, k) in enumerate(t.labels)}
+    # Build the functor dict of possibilities.
+    d = {}
+    for label in ss:
+        if data == "id" and label in ts:
+            d[label] = set([label])
+        else:
+            d[label] = set(ts)
+    # As long as there is an ambiguity, resolve it.
+    while any(len(v) > 1 for v in d.itervalues()):
+        for k, v in d.iteritems():
+            if len(v) == 0:
+                raise ValueError(k)
+            elif len(v) == 1:
+                continue
+            # Click bug can't print Unicode-laden options.
+            print "Options:", u" ".join(v)
+            choice = click.prompt(k)
+            while choice not in v:
+                print "Choice not in set; try again."
+                choice = click.prompt(k)
+            # Now recursively check each assignment, node by node, to ensure
+            # that it's still a functor.
+            restrictions = [(k, set([choice]))]
+            while restrictions:
+                rk, rvs = restrictions.pop()
+                drk = d[rk]
+                if drk.issubset(rvs):
+                    continue
+                print "restricting", len(restrictions), rk, rvs
+                drk.intersection_update(rvs)
+                ssrk = ss[rk]
+                tsus = set(ts[rv] for rv in rvs)
+                for arrow in s.iterarrows():
+                    if ssrk == arrow[0]:
+                        nk = s.labels[arrow[1]]
+                        nrvs = set(dv for dv in d[nk] if
+                                any(t.hasPath(du, ts[dv]) for du in tsus))
+                        restrictions.append((nk, nrvs))
+                    elif ssrk == arrow[1]:
+                        nk = s.labels[arrow[0]]
+                        nrvs = set(dv for dv in d[nk] if
+                                any(t.hasPath(ts[dv], du) for du in tsus))
+                        restrictions.append((nk, nrvs))
+
+    # Destructive.
+    m = {k: v.pop() for (k, v) in d.iteritems()}
+    title = s.title + u" → " + t.title
+    f = Functor(source=s, target=t, map=m, title=title)
+    png = f.makePNG()
     with open("latest.png", "wb") as handle:
         handle.write(png)
 
