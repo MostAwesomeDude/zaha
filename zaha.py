@@ -576,7 +576,10 @@ def functor(data, title, source, target):
         else:
             d[label] = set(ts)
     # As long as there is an ambiguity, resolve it.
-    while any(len(v) > 1 for v in d.itervalues()):
+    longs = sum(len(v) > 1 for v in d.itervalues())
+    while longs:
+        longs = sum(len(v) > 1 for v in d.itervalues())
+        print longs, "objects left"
         for k, v in d.iteritems():
             if len(v) == 0:
                 raise ValueError(k)
@@ -599,7 +602,6 @@ def functor(data, title, source, target):
                 drk = d[rk]
                 if drk.issubset(rvs):
                     continue
-                print "restricting", len(restrictions), rk, rvs
                 drk.intersection_update(rvs)
                 ssrk = ss[rk]
                 tsus = set(ts[rv] for rv in rvs)
@@ -614,6 +616,7 @@ def functor(data, title, source, target):
                         nrvs = set(dv for dv in d[nk] if
                                 any(t.hasPath(ts[dv], du) for du in tsus))
                         restrictions.append((nk, nrvs))
+            break
 
     # Destructive.
     m = {k: v.pop() for (k, v) in d.iteritems()}
