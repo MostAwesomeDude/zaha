@@ -560,9 +560,10 @@ def union(diagrams):
 
 @cli.command()
 @click.option("--id", "data", flag_value="id")
+@click.option("--title")
 @click.argument("source", type=click.File("rb"))
 @click.argument("target", type=click.File("rb"))
-def functor(data, source, target):
+def functor(data, title, source, target):
     s = getDiagram(source.read())
     t = getDiagram(target.read())
     ss = {k:i for (i, k) in enumerate(s.labels)}
@@ -581,12 +582,15 @@ def functor(data, source, target):
                 raise ValueError(k)
             elif len(v) == 1:
                 continue
+            blank = object()
             # Click bug can't print Unicode-laden options.
             print "Options:", u" ".join(v)
-            choice = click.prompt(k)
-            while choice not in v:
+            choice = click.prompt(k + u" (blank to skip)", default=blank)
+            while choice not in v and choice is not blank:
                 print "Choice not in set; try again."
-                choice = click.prompt(k)
+                choice = click.prompt(k + u" (blank to skip)")
+            if choice is blank:
+                continue
             # Now recursively check each assignment, node by node, to ensure
             # that it's still a functor.
             restrictions = [(k, set([choice]))]
@@ -613,7 +617,8 @@ def functor(data, source, target):
 
     # Destructive.
     m = {k: v.pop() for (k, v) in d.iteritems()}
-    title = s.title + u" → " + t.title
+    if title is None:
+        title = s.title + u" → " + t.title
     f = Functor(source=s, target=t, map=m, title=title)
     png = f.makePNG()
     with open("latest.png", "wb") as handle:
