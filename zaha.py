@@ -234,24 +234,28 @@ class Pos(object):
     def makeDOT(self):
         lines = [
             u'labelloc="t";',
-            u'label="%s";' % (self.title,),
+            u'label="%s";' % (self.title.replace('"', '\\"'),),
         ]
-        for label in self.labels:
-            lines.append(u""""%s";""" % label)
-        for i, (u, v) in enumerate(iterpairs(self.labels)):
+        labels = [l.replace('"', '\\"') for l in self.labels]
+        for label in labels:
+            lines.append(u'"%s";' % label)
+        for i, (u, v) in enumerate(iterpairs(labels)):
             if self.structure & (1 << i):
-                lines.append(u""""%s" -> "%s";""" % (u, v))
+                lines.append(u'"%s" -> "%s";' % (u, v))
         dot = u"{" + u"\n".join(lines) + u"}"
         return dot
 
-    def makePNG(self):
-        dot = self.makeDOT()
-        metadata = attr.asdict(self)
-        metadata.update({
+    def metadata(self):
+        d = attr.asdict(self)
+        d.update({
             "v": 2,
             "cat": "Pos",
         })
-        return packPNG(dot, metadata)
+        return d
+
+    def makePNG(self):
+        dot = self.makeDOT()
+        return packPNG(dot, self.metadata())
 
     def address(self, u, v):
         l = len(self.labels)
@@ -369,8 +373,7 @@ class Pos(object):
             rv.append("".join(chars))
         return rv
 
-def getDiagram(bs):
-    d = getPayload(bs)
+def defrost(d):
     v = d.pop("v")
     if v == 1:
         d["title"] = "Untitled Diagram"
@@ -380,11 +383,18 @@ def getDiagram(bs):
     else:
         raise ValueError("Unknown diagram version %d" % v)
     cat = d.pop("cat")
-    cls = {
-        "Pos": Pos,
-        "Functor": Functor,
-    }[cat]
-    return cls(**d)
+    if cat == "Functor":
+        source = defrost(d.pop("source"))
+        target = defrost(d.pop("target"))
+        return Functor(source=source, target=target, **d)
+    elif cat == "Pos":
+        return Pos(**d)
+    else:
+        raise ValueError(cat)
+
+def getDiagram(bs):
+    d = getPayload(bs)
+    return defrost(d)
 
 @attr.s
 class Functor(object):
@@ -409,14 +419,19 @@ class Functor(object):
         dot = u"\n".join(lines)
         return dot
 
-    def makePNG(self):
-        dot = self.makeDOT()
-        metadata = attr.asdict(self)
-        metadata.update({
+    def metadata(self):
+        d = attr.asdict(self)
+        d.update({
             "v": 2,
             "cat": "Functor",
+            "source": self.source.metadata(),
+            "target": self.target.metadata(),
         })
-        return packPNG(dot, metadata)
+        return d
+
+    def makePNG(self):
+        dot = self.makeDOT()
+        return packPNG(dot, self.metadata())
 
 @click.group()
 def cli():
@@ -458,6 +473,20 @@ def describe(diagram):
     print ''
     for line in d.matrix():
         print line
+
+@cli.command(name="json")
+@click.argument("diagram", type=click.File("rb"))
+def _json(diagram):
+    d = getDiagram(diagram.read())
+    print json.dumps(attr.asdict(d))
+
+@cli.command()
+@click.argument("diagram", type=click.File("rb"))
+def redraw(diagram):
+    d = getDiagram(diagram.read())
+    png = d.makePNG()
+    with open("latest.png", "wb") as handle:
+        handle.write(png)
 
 @cli.command()
 @click.argument("diagram", type=click.File("rb"))
@@ -558,6 +587,62 @@ def union(diagrams):
     with open("latest.png", "wb") as handle:
         handle.write(png)
 
+class FunctorTable(object):
+    def __init__(self, source, target, identity=False):
+        rv = {}
+        if identity:
+            for label in source.labels:
+                if label in target.labels:
+                    rv[label] = set([label])
+        else:
+            for label in source.labels:
+                rv[label] = set(target.labels)
+        self.table = rv
+        self.source = source
+        self.target = target
+        self.ss = {k:i for (i, k) in enumerate(source.labels)}
+        self.ts = {k:i for (i, k) in enumerate(target.labels)}
+
+    def viable(self):
+        return all(bool(v) for v in self.table.itervalues())
+
+    def restrict(self, restrictions):
+        # NB: Consumes input list.
+        while restrictions:
+            rk, rvs = restrictions.pop()
+            drk = self.table[rk]
+            if drk.issubset(rvs):
+                continue
+            drk.intersection_update(rvs)
+            ssrk = self.ss[rk]
+            tsus = set(self.ts[rv] for rv in rvs)
+            for arrow in self.source.iterarrows():
+                if ssrk == arrow[0]:
+                    nk = self.source.labels[arrow[1]]
+                    nrvs = set(dv for dv in self.table[nk] if
+                            any(self.target.hasPath(du, self.ts[dv]) for du in tsus))
+                    restrictions.append((nk, nrvs))
+                elif ssrk == arrow[1]:
+                    nk = self.source.labels[arrow[0]]
+                    nrvs = set(dv for dv in self.table[nk] if
+                            any(self.target.hasPath(self.ts[dv], du) for du in tsus))
+                    restrictions.append((nk, nrvs))
+
+    def restrictSingle(self, k, choice):
+        self.restrict([(k, set([choice]))])
+
+    def restrictSet(self, k, choices):
+        self.restrict([(k, choices)])
+
+    def extractMap(self):
+        # Destructive.
+        rv = {}
+        for k, v in self.table.iteritems():
+            if len(v) != 1:
+                raise ValueError(k)
+            rv[k] = v.pop()
+        return rv
+
 @cli.command()
 @click.option("--id", "data", flag_value="id")
 @click.option("--title")
@@ -566,15 +651,9 @@ def union(diagrams):
 def functor(data, title, source, target):
     s = getDiagram(source.read())
     t = getDiagram(target.read())
-    ss = {k:i for (i, k) in enumerate(s.labels)}
-    ts = {k:i for (i, k) in enumerate(t.labels)}
     # Build the functor dict of possibilities.
-    d = {}
-    for label in ss:
-        if data == "id" and label in ts:
-            d[label] = set([label])
-        else:
-            d[label] = set(ts)
+    ft = FunctorTable(s, t, identity=(data == "id"))
+    d = ft.table
     # As long as there is an ambiguity, resolve it.
     longs = sum(len(v) > 1 for v in d.itervalues())
     while longs:
@@ -596,33 +675,49 @@ def functor(data, title, source, target):
                 continue
             # Now recursively check each assignment, node by node, to ensure
             # that it's still a functor.
-            restrictions = [(k, set([choice]))]
-            while restrictions:
-                rk, rvs = restrictions.pop()
-                drk = d[rk]
-                if drk.issubset(rvs):
-                    continue
-                drk.intersection_update(rvs)
-                ssrk = ss[rk]
-                tsus = set(ts[rv] for rv in rvs)
-                for arrow in s.iterarrows():
-                    if ssrk == arrow[0]:
-                        nk = s.labels[arrow[1]]
-                        nrvs = set(dv for dv in d[nk] if
-                                any(t.hasPath(du, ts[dv]) for du in tsus))
-                        restrictions.append((nk, nrvs))
-                    elif ssrk == arrow[1]:
-                        nk = s.labels[arrow[0]]
-                        nrvs = set(dv for dv in d[nk] if
-                                any(t.hasPath(ts[dv], du) for du in tsus))
-                        restrictions.append((nk, nrvs))
+            ft.restrictSingle(k, choice)
             break
 
-    # Destructive.
-    m = {k: v.pop() for (k, v) in d.iteritems()}
+    m = ft.extractMap()
     if title is None:
         title = s.title + u" → " + t.title
     f = Functor(source=s, target=t, map=m, title=title)
+    png = f.makePNG()
+    with open("latest.png", "wb") as handle:
+        handle.write(png)
+
+@cli.command()
+@click.option("--left/--right", default=False)
+@click.option("--title")
+@click.argument("diagram", type=click.File("rb"))
+def adjoint(left, title, diagram):
+    f = getDiagram(diagram.read())
+    ft = FunctorTable(f.target, f.source)
+    # if left, q ≤ f(g(q)), else f(g(q)) ≤ q
+    for q in ft.source.labels:
+        if left:
+            ps = {p for p in ft.table[q]
+                    if ft.source.hasPath(ft.ss[q], ft.ss[f.map[p]])}
+        else:
+            ps = {p for p in ft.table[q]
+                    if ft.source.hasPath(ft.ss[f.map[p]], ft.ss[q])}
+        ft.restrictSet(q, ps)
+    # if left, g(f(p)) ≤ p, else p ≤ g(f(p))
+    for p in ft.target.labels:
+        q = f.map[p]
+        if left:
+            ps = {pp for pp in ft.table[q]
+                    if ft.target.hasPath(ft.ts[pp], ft.ts[p])}
+        else:
+            ps = {pp for pp in ft.table[q]
+                    if ft.target.hasPath(ft.ts[p], ft.ts[pp])}
+        ft.restrictSet(q, ps)
+    if not ft.viable():
+        raise Exception("No viable functors are adjoint")
+    map = ft.extractMap()
+    if title is None:
+        title = ("Left" if left else "Right") + " Adjoint to " + f.title
+    f = Functor(source=f.target, target=f.source, map=map, title=title)
     png = f.makePNG()
     with open("latest.png", "wb") as handle:
         handle.write(png)
