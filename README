@@ -33,3 +33,33 @@ implicitly always 1.
   \
 
 Thus, we may store any poset/DAG as a bitstring and a cardinality of elements.
+
+---
+
+https://www.mta.ca/uploadedFiles/Community/Bios/Geoff_Cruttwell/ams2014CruttwellCountingFiniteCats.pdf
+
+We can encode a category as a matrix of its objects and arrows. Suppose again
+that we have a diagram as above, with objects X, Y, and Z, as well as arrows f
+and g, from X to Y and to Z respectively.
+
+We do not need a linear extension; we need only ensure that the objects come
+before the arrows. Thus a valid listing is [ X Y Z f g ] and the resulting
+matrix is:
+
+[ X * * f g ]
+[ * Y * * * ]
+[ * * Z * * ]
+[ * f * * * ]
+[ * * g * * ]
+
+Thus, we may store any category as a bitstring and the cardinalities of its
+arrows and objects.
+
+Now, suppose that we have a 2-category. Then we may carry through an identical
+construction on the 1-categories and functors, representing each 1-category
+with its identity functor and its arrow matrix. Each non-identity functor must
+also store an arrow-to-arrow map.
+
+Thus, we may store any n-category as a bitstring, the cardinalities of its
+arrows and objects, for each arrow a map of its components, and for each
+object its representation as a (n-1)-category.
