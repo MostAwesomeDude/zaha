@@ -1,6 +1,6 @@
 #!/usr/bin/env nix-shell
 # encoding: utf-8
-#! nix-shell -p graphviz pythonPackages.attrs pythonPackages.click-repl -i python
+#! nix-shell -p graphviz pypyPackages.attrs pypyPackages.click-repl -i pypy
 
 from collections import defaultdict
 from itertools import combinations
@@ -466,8 +466,9 @@ def relabel(diagram):
 @cli.command()
 @click.argument("diagram", type=click.File("rb"))
 def describe(diagram):
-    d = getDiagram(diagram.read())
+    d = getPayload(diagram.read())
     print d
+    d = defrost(d)
     for label in d.labels:
         print label,
     print ''
@@ -719,6 +720,41 @@ def adjoint(left, title, diagram):
         title = ("Left" if left else "Right") + " Adjoint to " + f.title
     f = Functor(source=f.target, target=f.source, map=map, title=title)
     png = f.makePNG()
+    with open("latest.png", "wb") as handle:
+        handle.write(png)
+
+@cli.command()
+@click.option("--expr", prompt=True)
+@click.option("--title", prompt=True)
+def cat(expr, title):
+    objs = []
+    arrs = []
+    for val in expr.split(";"):
+        if ":" in val:
+            name, ty = val.split(":")
+            source, target = ty.split(u"→")
+            arrs.append((name.strip(), source.strip(), target.strip()))
+        else:
+            objs.append(val.strip())
+    labels = objs[:]
+    objs = {o:i for i, o in enumerate(objs)}
+    # Identity arrows for each object.
+    arrows = {(i, i):i for i in range(len(labels))}
+    for name, source, target in arrs:
+        s = objs[source]
+        t = objs[target]
+        n = len(labels)
+        labels.append(name)
+        # Composition for each end of the arrow.
+        arrows[s, n] = s
+        arrows[n, t] = t
+    import pdb; pdb.set_trace()
+    d = {
+        "labels": ["X", "Y", "Z", "f", "g"],
+        "structure": 0,
+        "title": "demo",
+    }
+    png = d.makePNG()
     with open("latest.png", "wb") as handle:
         handle.write(png)
 
