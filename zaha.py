@@ -1,6 +1,6 @@
 #!/usr/bin/env nix-shell
 # encoding: utf-8
-#! nix-shell -p graphviz pypyPackages.attrs pypyPackages.click-repl -i pypy
+#! nix-shell -p graphviz pythonPackages.attrs pythonPackages.click-repl -i python
 
 from collections import defaultdict
 from itertools import combinations
