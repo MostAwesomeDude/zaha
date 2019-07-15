@@ -467,7 +467,7 @@ def relabel(diagram):
 @click.argument("diagram", type=click.File("rb"))
 def describe(diagram):
     d = getPayload(diagram.read())
-    print d
+    print json.dumps(d)
     d = defrost(d)
     for label in d.labels:
         print label,
