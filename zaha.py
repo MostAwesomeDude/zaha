@@ -534,7 +534,8 @@ def _product(lhs, rhs):
 
 @cli.command()
 @click.argument("diagrams", nargs=-1, type=click.File("rb"))
-def union(diagrams):
+@click.option("--title")
+def union(diagrams, title):
     """
     Take the union of many diagrams.
     """
@@ -574,14 +575,15 @@ def union(diagrams):
             for v in us:
                 dcg[u].add(v)
 
-    if len(posets) == 1:
-        title = posets[0].title
-    elif len(posets) == 2:
-        title = posets[0].title + u" ∪ " + posets[1].title
-    elif len(posets) <= 5:
-        title = u"⋃ " + u", ".join(p.title for p in posets)
-    else:
-        title = u"⋃ %d diagrams" % (len(posets),)
+    if title is None:
+        if len(posets) == 1:
+            title = posets[0].title
+        elif len(posets) == 2:
+            title = posets[0].title + u" ∪ " + posets[1].title
+        elif len(posets) <= 5:
+            title = u"⋃ " + u", ".join(p.title for p in posets)
+        else:
+            title = u"⋃ %d diagrams" % (len(posets),)
 
     d = Pos.fromDCG(labels, dcg, title)
     png = d.makePNG()
