@@ -1,6 +1,4 @@
-#!/usr/bin/env nix-shell
 # encoding: utf-8
-#! nix-shell -p graphviz pythonPackages.attrs pythonPackages.click-repl -i python
 
 from collections import defaultdict
 from itertools import combinations
@@ -35,9 +33,11 @@ def itertilted(m, n):
             yield i, j
 
 
+DOT = "@GRAPHVIZ@/bin/dot"
+
 def dot2png(dot):
     text = "digraph " + dot
-    p = Popen(["dot", "-Tpng"], stdin=PIPE, stdout=PIPE)
+    p = Popen([DOT, "-Tpng"], stdin=PIPE, stdout=PIPE)
     stdout, stderr = p.communicate(text.encode("utf-8"))
     status = p.poll()
     if status:
@@ -57,13 +57,13 @@ def _table(n):
 CRC_TABLE = [_table(n) for n in range(0x100)]
 def _crc(h, s):
     for c in s:
-        h = CRC_TABLE[(h ^ ord(c)) & 0xff] ^ (h >> 8)
+        h = CRC_TABLE[(h ^ c) & 0xff] ^ (h >> 8)
     return h
 def computeCRC(s):
     return _crc(0xffffffff, s) ^ 0xffffffff
 
 LONG = Struct(">L")
-MAGIC = "\x89PNG\r\n\x1a\n"
+MAGIC = b"\x89PNG\r\n\x1a\n"
 
 def iterchunks(png):
     offset = [0]
@@ -91,14 +91,14 @@ def buildChunk(ty, chunk):
     crc = LONG.pack(computeCRC(body))
     return length + body + crc
 
-ZAHA_CHUNK_TYPE = "zaHa"
+ZAHA_CHUNK_TYPE = b"zaHa"
 
 def packPNG(dot, metadata):
     png = dot2png(dot)
     chunks = [(ty, chunk) for ty, chunk in iterchunks(png)]
-    blob = json.dumps(metadata)
+    blob = json.dumps(metadata).encode("utf-8")
     chunks.insert(-1, (ZAHA_CHUNK_TYPE, blob))
-    return MAGIC + "".join(buildChunk(ty, chunk) for ty, chunk in chunks)
+    return MAGIC + b"".join(buildChunk(ty, chunk) for ty, chunk in chunks)
 
 def tarjan(graph):
     stack = []
@@ -125,7 +125,7 @@ def tarjan(graph):
                     break
             rv.append(s)
 
-    for v in graph.iterkeys():
+    for v in graph.keys():
         if v not in indices:
             go(v)
     rv.reverse()
@@ -157,7 +157,7 @@ def reduceDAG(dag):
             _cache[k] = rv
         return _cache[k]
 
-    for u, vs in dag.iteritems():
+    for u, vs in dag.items():
         # Remove self-loops here.
         vs.discard(u)
         # Order doesn't matter here, so itertools.combinations() is safe.
@@ -199,7 +199,7 @@ def flip(size, structure):
         for j in range(i):
             cols[j].append(ints.pop())
     perm = sum(cols, [])
-    # print "perm inverts self", [perm[i] for i in perm]
+    # print("perm inverts self", [perm[i] for i in perm])
 
     rv = 0
     for i in range(intSize):
@@ -224,7 +224,7 @@ class Pos(object):
             for old in scc:
                 seen[old] = u
         dag = defaultdict(set)
-        for u, vs in dcg.iteritems():
+        for u, vs in dcg.items():
             dag[seen[u]].update(seen[v] for v in vs)
         dag = reduceDAG(dag)
         s = succinct(dag, len(ks))
@@ -413,7 +413,7 @@ class Functor(object):
             u'labelloc="t";',
             u'label="%s";' % (self.title,),
         ]
-        for k, v in self.map.iteritems():
+        for k, v in self.map.items():
             lines.append(u'"%s" -> "%s";' % (k, v))
         lines.append(u"}")
         dot = u"\n".join(lines)
@@ -450,6 +450,16 @@ def poset(expr, title, amend):
 
 @cli.command()
 @click.argument("diagram", type=click.File("rb"))
+def dot(diagram):
+    """
+    Describe a diagram in DOT.
+    """
+
+    d = getDiagram(diagram.read())
+    print("digraph", d.makeDOT())
+
+@cli.command()
+@click.argument("diagram", type=click.File("rb"))
 def relabel(diagram):
     d = getDiagram(diagram.read())
     old = [d.title] + d.labels
@@ -467,19 +477,19 @@ def relabel(diagram):
 @click.argument("diagram", type=click.File("rb"))
 def describe(diagram):
     d = getPayload(diagram.read())
-    print json.dumps(d)
+    print(json.dumps(d))
     d = defrost(d)
     for label in d.labels:
-        print label,
-    print ''
+        print(label,)
+    print('')
     for line in d.matrix():
-        print line
+        print(line)
 
 @cli.command(name="json")
 @click.argument("diagram", type=click.File("rb"))
 def _json(diagram):
     d = getDiagram(diagram.read())
-    print json.dumps(attr.asdict(d))
+    print(json.dumps(attr.asdict(d)))
 
 @cli.command()
 @click.argument("diagram", type=click.File("rb"))
@@ -607,7 +617,7 @@ class FunctorTable(object):
         self.ts = {k:i for (i, k) in enumerate(target.labels)}
 
     def viable(self):
-        return all(bool(v) for v in self.table.itervalues())
+        return all(bool(v) for v in self.table.values())
 
     def restrict(self, restrictions):
         # NB: Consumes input list.
@@ -640,7 +650,7 @@ class FunctorTable(object):
     def extractMap(self):
         # Destructive.
         rv = {}
-        for k, v in self.table.iteritems():
+        for k, v in self.table.items():
             if len(v) != 1:
                 raise ValueError(k)
             rv[k] = v.pop()
@@ -658,21 +668,21 @@ def functor(data, title, source, target):
     ft = FunctorTable(s, t, identity=(data == "id"))
     d = ft.table
     # As long as there is an ambiguity, resolve it.
-    longs = sum(len(v) > 1 for v in d.itervalues())
+    longs = sum(len(v) > 1 for v in d.values())
     while longs:
-        longs = sum(len(v) > 1 for v in d.itervalues())
-        print longs, "objects left"
-        for k, v in d.iteritems():
+        longs = sum(len(v) > 1 for v in d.values())
+        print(longs, "objects left")
+        for k, v in d.items():
             if len(v) == 0:
                 raise ValueError(k)
             elif len(v) == 1:
                 continue
             blank = object()
             # Click bug can't print Unicode-laden options.
-            print "Options:", u" ".join(v)
+            print("Options:", u" ".join(v))
             choice = click.prompt(k + u" (blank to skip)", default=blank)
             while choice not in v and choice is not blank:
-                print "Choice not in set; try again."
+                print("Choice not in set; try again.")
                 choice = click.prompt(k + u" (blank to skip)")
             if choice is blank:
                 continue
