@@ -231,6 +231,13 @@ class Pos(object):
         self = cls(labels=ks, structure=s, title=title)
         return self
 
+    def dumpEdges(self):
+        edges = defaultdict(list)
+        for i, (u, v) in enumerate(iterpairs(self.labels)):
+            if self.structure & (1 << i):
+                edges[u].append(v)
+        return edges
+
     def makeDOT(self):
         lines = [
             u'labelloc="t";',
@@ -490,6 +497,16 @@ def describe(diagram):
 def _json(diagram):
     d = getDiagram(diagram.read())
     print(json.dumps(attr.asdict(d)))
+
+@cli.command()
+@click.argument("diagram", type=click.File("rb"))
+def edges(diagram):
+    """
+    Dump the edges of a diagram as JSON.
+    """
+
+    d = getDiagram(diagram.read())
+    print(json.dumps(d.dumpEdges()))
 
 @cli.command()
 @click.argument("diagram", type=click.File("rb"))
