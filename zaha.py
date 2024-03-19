@@ -177,7 +177,7 @@ def parseChains(expr):
                  for v in chain.split(u"→")]
         for u, v in zip(verts, verts[1:]):
             dcg[u].add(v)
-    labellist = sorted(clabels.iterkeys(), key=clabels.__getitem__)
+    labellist = sorted(clabels.keys(), key=clabels.__getitem__)
     return dcg, labellist
 
 def getPayload(bs):
